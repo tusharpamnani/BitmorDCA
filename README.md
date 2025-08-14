@@ -21,8 +21,8 @@ The project consists of three main components:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/tusharpamnani/bitmordca.git
-cd bitmordca
+git clone https://github.com/tusharpamnani/based_fellowship.git
+cd based_fellowship
 ```
 
 2. Install Foundry (if not already installed):
