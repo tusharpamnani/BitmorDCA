@@ -1,0 +1,187 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model DCAUser {
+  id                String    @id @default(cuid())
+  address           String    @unique
+  totalPaid         Float
+  btcAccumulated    Float
+  startTime         DateTime
+  lastPaymentTime   DateTime
+  currentStreak     Int       @default(0)
+  maxStreak         Int       @default(0)
+  prepaidDays       Int       @default(0)
+  coveredUntil      DateTime?
+  status            Int       @default(1)
+  bitmorEnabled     Boolean   @default(false)
+  thresholdReached  Boolean   @default(false)
+  plans             DCAPlan[]
+  deposits          Deposit[]
+  withdrawals       Withdrawal[]
+  rewards           Reward[]
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([address])
+  @@index([currentStreak])
+}
+
+model DCAPlan {
+  id                String      @id @default(cuid())
+  userId            String
+  user              DCAUser     @relation(fields: [userId], references: [id])
+  targetBTC         Float
+  dailyAmount       Float
+  timePeriod        Int        // in days
+  withdrawalDelay   Int        // in days
+  penaltyMin        Float
+  penaltyMax        Float
+  penaltyExponent   Float      @default(1.5)
+  cadence           String     // "daily" or "weekly"
+  graceWindow       Int        // in days
+  isActive          Boolean    @default(true)
+  lastGraceUsed     DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  payments          DCAPayment[]
+  deposits          Deposit[]
+  withdrawals       Withdrawal[]
+
+  @@index([userId, isActive])
+  @@index([cadence, isActive])
+}
+
+model DCAPayment {
+  id              String    @id @default(cuid())
+  planId          String
+  plan            DCAPlan   @relation(fields: [planId], references: [id])
+  amount          Float
+  btcAmount       Float
+  usesPrepaid     Boolean   @default(false)
+  status          String    // "pending", "completed", "failed"
+  txHash          String?
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([planId, status])
+  @@index([txHash])
+}
+
+model Deposit {
+  id              String    @id @default(cuid())
+  userId          String
+  user            DCAUser   @relation(fields: [userId], references: [id])
+  planId          String
+  plan            DCAPlan   @relation(fields: [planId], references: [id])
+  amount          Float
+  btcAmount       Float
+  source          String    // "manual", "auto", "dust"
+  sourceToken     String    // token address or "dust"
+  txHash          String
+  aaveDepositTx   String?
+  status          String    // "pending", "completed", "failed"
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([userId, status])
+  @@index([txHash])
+  @@index([source])
+}
+
+model Withdrawal {
+  id              String    @id @default(cuid())
+  userId          String
+  user            DCAUser   @relation(fields: [userId], references: [id])
+  planId          String
+  plan            DCAPlan   @relation(fields: [planId], references: [id])
+  amount          Float
+  btcAmount       Float
+  penaltyAmount   Float
+  rewardForfeited Float?
+  txHash          String
+  aaveWithdrawTx  String?
+  status          String    // "pending", "completed", "failed"
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([userId, status])
+  @@index([txHash])
+}
+
+model Reward {
+  id              String    @id @default(cuid())
+  userId          String
+  user            DCAUser   @relation(fields: [userId], references: [id])
+  amount          Float
+  source          String    // "yield", "penalty"
+  eligibleSince   DateTime
+  weight          Float     @default(1.0)
+  claimed         Boolean   @default(false)
+  txHash          String?
+  createdAt       DateTime  @default(now())
+  claimedAt       DateTime?
+
+  @@index([userId, claimed])
+  @@index([source])
+}
+
+model YieldPool {
+  id              String    @id @default(cuid())
+  totalAmount     Float
+  aaveYield       Float
+  penaltyAmount   Float
+  distributedAt   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([distributedAt])
+}
+
+model DustSweep {
+  id              String    @id @default(cuid())
+  userAddress     String
+  tokens          Json      // Array of token addresses and amounts
+  totalValueUSD   Float
+  txHash          String?
+  status          String    // "pending", "completed", "failed"
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([userAddress])
+  @@index([status])
+}
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+  asset     String
+  price     Float
+  fetchedAt DateTime @default(now())
+
+  @@index([asset, fetchedAt])
+}
+
+model ErrorLog {
+  id           String   @id @default(cuid())
+  path         String
+  method       String
+  errorName    String
+  errorMessage String
+  errorStack   String?
+  status       Int
+  timestamp    DateTime @default(now())
+
+  @@index([timestamp])
+}
