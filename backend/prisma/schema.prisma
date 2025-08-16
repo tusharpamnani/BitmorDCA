@@ -28,15 +28,40 @@ model DCAUser {
   status            Int       @default(1)
   bitmorEnabled     Boolean   @default(false)
   thresholdReached  Boolean   @default(false)
+  totalPenaltyPaid  Float     @default(0)
+  totalDustEarned   Float     @default(0)
+  referralCode      String    @unique @default(cuid())
+  referredBy        String?
   plans             DCAPlan[]
   deposits          Deposit[]
   withdrawals       Withdrawal[]
   rewards           Reward[]
+  referrals         Referral[] @relation("ReferrerRelation")
+  referredByUser    Referral? @relation("ReferredByRelation")
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   @@index([address])
   @@index([currentStreak])
+  @@index([referralCode])
+}
+
+model SupportedToken {
+  id              String    @id @default(cuid())
+  symbol          String    @unique
+  name            String
+  address         String    @unique
+  decimals        Int
+  isStablecoin    Boolean   @default(false)
+  isEnabled       Boolean   @default(true)
+  minAmount       Float
+  maxAmount       Float
+  planTokens      PlanToken[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([symbol])
+  @@index([isEnabled])
 }
 
 model DCAPlan {
@@ -44,7 +69,7 @@ model DCAPlan {
   userId            String
   user              DCAUser     @relation(fields: [userId], references: [id])
   targetBTC         Float
-  dailyAmount       Float
+  totalDailyAmount  Float      // Total daily amount across all tokens
   timePeriod        Int        // in days
   withdrawalDelay   Int        // in days
   penaltyMin        Float
@@ -59,9 +84,27 @@ model DCAPlan {
   payments          DCAPayment[]
   deposits          Deposit[]
   withdrawals       Withdrawal[]
+  tokens            PlanToken[]
 
   @@index([userId, isActive])
   @@index([cadence, isActive])
+}
+
+model PlanToken {
+  id              String         @id @default(cuid())
+  planId          String
+  plan            DCAPlan        @relation(fields: [planId], references: [id])
+  tokenId         String
+  token           SupportedToken @relation(fields: [tokenId], references: [id])
+  dailyAmount     Float         // Individual token daily amount
+  weight          Float         // Percentage weight in the plan
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([planId, tokenId])
+  @@index([planId])
+  @@index([tokenId])
 }
 
 model DCAPayment {
@@ -184,4 +227,22 @@ model ErrorLog {
   timestamp    DateTime @default(now())
 
   @@index([timestamp])
+}
+
+model Referral {
+  id              String   @id @default(cuid())
+  referrerId      String
+  referredId      String
+  referrer        DCAUser  @relation("ReferrerRelation", fields: [referrerId], references: [id])
+  referred        DCAUser  @relation("ReferredByRelation", fields: [referredId], references: [id])
+  rewardAmount    Float    @default(0)
+  status          String   @default("pending") // pending, active, completed
+  createdAt       DateTime @default(now())
+  activatedAt     DateTime?
+  completedAt     DateTime?
+
+  @@unique([referrerId, referredId])
+  @@index([referrerId])
+  @@index([referredId])
+  @@index([status])
 }

@@ -253,7 +253,8 @@ app.post('/api/plans/create', async (req, res) => {
             penaltyMax,
             penaltyExponent,
             cadence,
-            bitmorIntegration
+            bitmorIntegration,
+            tokens // Array of {tokenId, amount, weight}
         } = req.body;
         
         // Input validation
@@ -276,6 +277,16 @@ app.post('/api/plans/create', async (req, res) => {
         if (!['daily', 'weekly'].includes(cadence)) {
             return res.status(400).json({ error: 'Invalid cadence. Must be daily or weekly' });
         }
+
+        if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
+            return res.status(400).json({ error: 'At least one token must be specified' });
+        }
+
+        // Validate token weights sum to 100%
+        const totalWeight = tokens.reduce((sum, t) => sum + t.weight, 0);
+        if (Math.abs(totalWeight - 100) > 0.01) {
+            return res.status(400).json({ error: 'Token weights must sum to 100%' });
+        }
         
         // Get or create user
         let user = await BitmorDCAService.getUserByAddress(userAddress.toLowerCase());
@@ -285,14 +296,71 @@ app.post('/api/plans/create', async (req, res) => {
         
         // Calculate amounts
         const btcPrice = await BitmorDCAService.getBTCPrice();
-        const dailyAmount = BitmorDCAService.calculateDailyAmount(
+        const totalDailyAmount = BitmorDCAService.calculateDailyAmount(
             ethers.parseEther(targetBTC.toString()),
             timePeriodDays,
             btcPrice
         );
+
+        // Validate tokens and get their details
+        const supportedTokens = await prisma.supportedToken.findMany({
+            where: {
+                id: {
+                    in: tokens.map(t => t.tokenId)
+                },
+                isEnabled: true
+            }
+        });
+
+        if (supportedTokens.length !== tokens.length) {
+            return res.status(400).json({ error: 'One or more tokens are not supported' });
+        }
+
+        // Create transaction
+        const plan = await prisma.$transaction(async (prisma) => {
+            // Create the main plan
+            const plan = await prisma.dCAPlan.create({
+                data: {
+                    userId: user.id,
+                    targetBTC: parseFloat(targetBTC),
+                    totalDailyAmount: totalDailyAmount,
+                    timePeriod: timePeriodDays,
+                    withdrawalDelay: withdrawalDelayDays,
+                    penaltyMin: penaltyMin,
+                    penaltyMax: penaltyMax,
+                    penaltyExponent: penaltyExponent || 1.5,
+                    cadence: cadence,
+                    graceWindow: 1,
+                    isActive: true
+                }
+            });
+
+            // Create token allocations
+            const tokenCreations = tokens.map(token => {
+                const supportedToken = supportedTokens.find(st => st.id === token.tokenId);
+                const dailyAmount = (totalDailyAmount * token.weight) / 100;
+
+                if (dailyAmount < supportedToken.minAmount || dailyAmount > supportedToken.maxAmount) {
+                    throw new Error(`Invalid amount for token ${supportedToken.symbol}`);
+                }
+
+                return prisma.planToken.create({
+                    data: {
+                        planId: plan.id,
+                        tokenId: token.tokenId,
+                        dailyAmount: dailyAmount,
+                        weight: token.weight
+                    }
+                });
+            });
+
+            await Promise.all(tokenCreations);
+            
+            return plan;
+        });
         
         // Create plan in database
-        const plan = await BitmorDCAService.createPlan(user.id, {
+        const createdPlan = await BitmorDCAService.createPlan(user.id, {
             targetBTC: parseFloat(targetBTC),
             dailyAmount: parseFloat(ethers.formatUnits(dailyAmount, 6)),
             timePeriod: timePeriodDays,
@@ -1097,7 +1165,374 @@ app.post('/api/rewards/distribute', async (req, res) => {
     }
 });
 
-// 8. Dust Sweeping
+// 8. User Balance and Stats
+app.get('/api/users/:address/balance', async (req, res) => {
+    try {
+        const { address } = req.params;
+        
+        if (!ethers.isAddress(address)) {
+            return res.status(400).json({ error: 'Invalid user address' });
+        }
+        
+        // Get user from database
+        const user = await prisma.dCAUser.findUnique({
+            where: { address: address.toLowerCase() },
+            include: {
+                plans: {
+                    where: { isActive: true },
+                    include: {
+                        payments: {
+                            where: { status: 'completed' }
+                        }
+                    }
+                },
+                withdrawals: {
+                    where: { status: 'completed' }
+                },
+                deposits: {
+                    where: { status: 'completed' }
+                }
+            }
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Get on-chain cbBTC balance
+        const cbBTCBalance = await contract.getAccumulatedBTC(address);
+        
+        // Calculate total BTC accumulated (including withdrawn)
+        const totalBTCAccumulated = user.btcAccumulated;
+        const totalWithdrawn = user.withdrawals.reduce((sum, w) => sum + w.btcAmount, 0);
+        const totalDeposited = user.deposits.reduce((sum, d) => sum + d.btcAmount, 0);
+        
+        // Calculate total paid in fees
+        const totalPenaltyPaid = user.totalPenaltyPaid;
+        
+        res.json({
+            cbBTCBalance: ethers.formatEther(cbBTCBalance),
+            totalBTCAccumulated,
+            totalWithdrawn,
+            totalDeposited,
+            totalPenaltyPaid,
+            currentBalance: user.btcAccumulated
+        });
+    } catch (error) {
+        console.error('Error fetching user balance:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// 9. Early Withdrawal Fee
+app.get('/api/plans/:planId/withdrawal-fee', async (req, res) => {
+    try {
+        const { planId } = req.params;
+        
+        // Get plan from database
+        const plan = await prisma.dCAPlan.findUnique({
+            where: { id: planId },
+            include: {
+                user: true,
+                payments: {
+                    where: { status: 'completed' }
+                }
+            }
+        });
+
+        if (!plan) {
+            return res.status(404).json({ error: 'Plan not found' });
+        }
+
+        // Calculate days remaining in plan
+        const now = new Date();
+        const startDate = plan.createdAt;
+        const endDate = new Date(startDate.getTime() + plan.timePeriod * 24 * 60 * 60 * 1000);
+        const daysRemaining = Math.ceil((endDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+
+        if (daysRemaining <= 0) {
+            return res.json({ fee: 0, daysRemaining: 0 });
+        }
+
+        // Calculate penalty based on plan parameters
+        const progress = 1 - (daysRemaining / plan.timePeriod);
+        const penaltyPercentage = plan.penaltyMin + (plan.penaltyMax - plan.penaltyMin) * 
+            Math.pow(1 - progress, plan.penaltyExponent);
+
+        // Calculate total value locked
+        const totalValueLocked = plan.btcAccumulated * await BitmorDCAService.getBTCPrice();
+        const estimatedFee = (totalValueLocked * penaltyPercentage) / 100;
+
+        res.json({
+            fee: estimatedFee,
+            daysRemaining,
+            penaltyPercentage,
+            totalValueLocked,
+            progress: progress * 100
+        });
+    } catch (error) {
+        console.error('Error calculating withdrawal fee:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// 10. Referral System
+app.get('/api/users/:address/referral', async (req, res) => {
+    try {
+        const { address } = req.params;
+        
+        if (!ethers.isAddress(address)) {
+            return res.status(400).json({ error: 'Invalid user address' });
+        }
+        
+        const user = await prisma.dCAUser.findUnique({
+            where: { address: address.toLowerCase() },
+            include: {
+                referrals: {
+                    include: {
+                        referred: true
+                    }
+                }
+            }
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Get referral statistics
+        const totalReferrals = user.referrals.length;
+        const activeReferrals = user.referrals.filter(r => r.status === 'active').length;
+        const totalRewards = user.referrals.reduce((sum, r) => sum + r.rewardAmount, 0);
+        
+        res.json({
+            referralCode: user.referralCode,
+            referralLink: `${process.env.FRONTEND_URL}/register?ref=${user.referralCode}`,
+            totalReferrals,
+            activeReferrals,
+            totalRewards,
+            referrals: user.referrals.map(r => ({
+                address: r.referred.address,
+                status: r.status,
+                rewardAmount: r.rewardAmount,
+                joinedAt: r.createdAt
+            }))
+        });
+    } catch (error) {
+        console.error('Error fetching referral info:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.post('/api/referral/use', async (req, res) => {
+    try {
+        const { userAddress, referralCode } = req.body;
+        
+        if (!ethers.isAddress(userAddress)) {
+            return res.status(400).json({ error: 'Invalid user address' });
+        }
+
+        // Find referrer by referral code
+        const referrer = await prisma.dCAUser.findUnique({
+            where: { referralCode }
+        });
+
+        if (!referrer) {
+            return res.status(404).json({ error: 'Invalid referral code' });
+        }
+
+        // Check if user exists
+        let user = await prisma.dCAUser.findUnique({
+            where: { address: userAddress.toLowerCase() }
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Check if user already has a referrer
+        if (user.referredBy) {
+            return res.status(400).json({ error: 'User already has a referrer' });
+        }
+
+        // Create referral relationship
+        await prisma.referral.create({
+            data: {
+                referrerId: referrer.id,
+                referredId: user.id,
+                status: 'pending'
+            }
+        });
+
+        // Update user with referral info
+        await prisma.dCAUser.update({
+            where: { id: user.id },
+            data: { referredBy: referrer.id }
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error using referral code:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// 11. User Statistics
+app.get('/api/users/:address/stats', async (req, res) => {
+    try {
+        const { address } = req.params;
+        
+        if (!ethers.isAddress(address)) {
+            return res.status(400).json({ error: 'Invalid user address' });
+        }
+        
+        const user = await prisma.dCAUser.findUnique({
+            where: { address: address.toLowerCase() },
+            include: {
+                plans: {
+                    include: {
+                        payments: {
+                            where: { status: 'completed' }
+                        }
+                    }
+                },
+                deposits: {
+                    where: { status: 'completed' }
+                },
+                withdrawals: {
+                    where: { status: 'completed' }
+                },
+                referrals: true,
+                rewards: {
+                    where: { claimed: true }
+                }
+            }
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Calculate DCA statistics
+        const totalDCAExecuted = user.plans.reduce((sum, plan) => 
+            sum + plan.payments.reduce((pSum, p) => pSum + p.amount, 0), 0);
+        
+        // Calculate dust sweep earnings
+        const dustSweepEarnings = user.totalDustEarned;
+        
+        // Calculate penalties paid
+        const totalPenalties = user.totalPenaltyPaid;
+        
+        // Get referral stats
+        const referralStats = {
+            totalReferrals: user.referrals.length,
+            activeReferrals: user.referrals.filter(r => r.status === 'active').length,
+            totalRewards: user.referrals.reduce((sum, r) => sum + r.rewardAmount, 0)
+        };
+        
+        // Calculate rewards
+        const totalRewards = user.rewards.reduce((sum, r) => sum + r.amount, 0);
+        
+        res.json({
+            address: user.address,
+            startTime: user.startTime,
+            currentStreak: user.currentStreak,
+            maxStreak: user.maxStreak,
+            statistics: {
+                totalDCAExecuted,
+                dustSweepEarnings,
+                totalPenalties,
+                totalRewards,
+                totalBTCAccumulated: user.btcAccumulated,
+                totalDeposited: user.deposits.reduce((sum, d) => sum + d.amount, 0),
+                totalWithdrawn: user.withdrawals.reduce((sum, w) => sum + w.amount, 0)
+            },
+            referralStats,
+            activePlans: user.plans.filter(p => p.isActive).length,
+            completedPlans: user.plans.filter(p => !p.isActive).length
+        });
+    } catch (error) {
+        console.error('Error fetching user stats:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// 12. Token Management
+app.get('/api/tokens/supported', async (req, res) => {
+    try {
+        const supportedTokens = await prisma.supportedToken.findMany({
+            where: {
+                isEnabled: true
+            },
+            orderBy: {
+                symbol: 'asc'
+            }
+        });
+
+        res.json({
+            tokens: supportedTokens.map(token => ({
+                id: token.id,
+                symbol: token.symbol,
+                name: token.name,
+                address: token.address,
+                decimals: token.decimals,
+                isStablecoin: token.isStablecoin,
+                minAmount: token.minAmount,
+                maxAmount: token.maxAmount
+            }))
+        });
+    } catch (error) {
+        console.error('Error fetching supported tokens:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.get('/api/users/:address/token-balances', async (req, res) => {
+    try {
+        const { address } = req.params;
+        
+        if (!ethers.isAddress(address)) {
+            return res.status(400).json({ error: 'Invalid user address' });
+        }
+
+        // Get all supported tokens
+        const supportedTokens = await prisma.supportedToken.findMany({
+            where: {
+                isEnabled: true
+            }
+        });
+
+        // Get balances for all supported tokens
+        const balances = await Promise.all(
+            supportedTokens.map(async (token) => {
+                const contract = new ethers.Contract(
+                    token.address,
+                    ['function balanceOf(address) view returns (uint256)'],
+                    provider
+                );
+                const balance = await contract.balanceOf(address);
+                return {
+                    token: {
+                        id: token.id,
+                        symbol: token.symbol,
+                        name: token.name,
+                        address: token.address,
+                        decimals: token.decimals
+                    },
+                    balance: ethers.formatUnits(balance, token.decimals),
+                    raw: balance.toString()
+                };
+            })
+        );
+
+        res.json({ balances });
+    } catch (error) {
+        console.error('Error fetching token balances:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// 13. Dust Sweeping
 app.post('/api/dust/calculate', async (req, res) => {
     try {
         const { userAddress } = req.body;

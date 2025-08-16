@@ -57,7 +57,54 @@ The backend service (`backend/index.js`) provides RESTful APIs for interacting w
 
 ### API Endpoints
 
-#### 1. Plan Management
+#### 1. Token Management
+
+##### Get Supported Tokens
+```http
+GET /api/tokens/supported
+```
+**Response:**
+```json
+{
+    "tokens": [
+        {
+            "id": "token-id",
+            "symbol": "USDC",
+            "name": "USD Coin",
+            "address": "0x...",
+            "decimals": 6,
+            "isStablecoin": true,
+            "minAmount": 10,
+            "maxAmount": 10000
+        }
+    ]
+}
+```
+
+##### Get User Token Balances
+```http
+GET /api/users/:address/token-balances
+```
+**Response:**
+```json
+{
+    "balances": [
+        {
+            "token": {
+                "id": "token-id",
+                "symbol": "USDC",
+                "name": "USD Coin",
+                "address": "0x...",
+                "decimals": 6
+            },
+            "balance": "1000.0",
+            "raw": "1000000000"
+        }
+    ]
+}
+```
+
+#### 2. Plan Management
 
 ##### Create Plan
 ```http
@@ -73,9 +120,24 @@ POST /api/plans/create
     "penaltyMin": 100,
     "penaltyMax": 5000,
     "cadence": "daily",
-    "bitmorIntegration": true
+    "bitmorIntegration": true,
+    "tokens": [
+        {
+            "tokenId": "token-id-1",
+            "weight": 60
+        },
+        {
+            "tokenId": "token-id-2",
+            "weight": 40
+        }
+    ]
 }
 ```
+**Notes:**
+- The `tokens` array specifies which tokens to use for DCA and their relative weights
+- Weights must sum to 100%
+- Each token must be a supported token (fetch from `/api/tokens/supported`)
+- The daily amount for each token is calculated based on its weight
 
 ##### Calculate Payment
 ```http
@@ -175,7 +237,105 @@ POST /api/plans/verify-completion
 }
 ```
 
-#### 8. System Status
+#### 8. User Balance and Stats
+
+##### Get User Balance
+```http
+GET /api/users/:address/balance
+```
+**Response:**
+```json
+{
+    "cbBTCBalance": "0.5",
+    "totalBTCAccumulated": 1.2,
+    "totalWithdrawn": 0.7,
+    "totalDeposited": 1.5,
+    "totalPenaltyPaid": 50.0,
+    "currentBalance": 0.5
+}
+```
+
+##### Get Early Withdrawal Fee
+```http
+GET /api/plans/:planId/withdrawal-fee
+```
+**Response:**
+```json
+{
+    "fee": 100.0,
+    "daysRemaining": 30,
+    "penaltyPercentage": 5.0,
+    "totalValueLocked": 2000.0,
+    "progress": 75.0
+}
+```
+
+##### Get User Referrals
+```http
+GET /api/users/:address/referral
+```
+**Response:**
+```json
+{
+    "referralCode": "abc123",
+    "referralLink": "https://app.bitmordca.com/register?ref=abc123",
+    "totalReferrals": 5,
+    "activeReferrals": 3,
+    "totalRewards": 100.0,
+    "referrals": [
+        {
+            "address": "0x...",
+            "status": "active",
+            "rewardAmount": 20.0,
+            "joinedAt": "2024-03-20T12:00:00Z"
+        }
+    ]
+}
+```
+
+##### Use Referral Code
+```http
+POST /api/referral/use
+```
+**Body:**
+```json
+{
+    "userAddress": "0x...",
+    "referralCode": "abc123"
+}
+```
+
+##### Get User Statistics
+```http
+GET /api/users/:address/stats
+```
+**Response:**
+```json
+{
+    "address": "0x...",
+    "startTime": "2024-01-01T00:00:00Z",
+    "currentStreak": 30,
+    "maxStreak": 45,
+    "statistics": {
+        "totalDCAExecuted": 5000.0,
+        "dustSweepEarnings": 100.0,
+        "totalPenalties": 50.0,
+        "totalRewards": 200.0,
+        "totalBTCAccumulated": 1.5,
+        "totalDeposited": 6000.0,
+        "totalWithdrawn": 4000.0
+    },
+    "referralStats": {
+        "totalReferrals": 5,
+        "activeReferrals": 3,
+        "totalRewards": 100.0
+    },
+    "activePlans": 2,
+    "completedPlans": 1
+}
+```
+
+#### 9. System Status
 
 ##### Health Check
 ```http
