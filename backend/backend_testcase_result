@@ -1,0 +1,139 @@
+tusha@Tushar MINGW64 ~/OneDrive/Desktop/bitmor/bitmordca/backend (main)
+$ node simple-test.js
+� Test server started on port 3001
+� Running BitmorDCA Backend Tests...
+
+1. Testing Health Check...
+✅ Health Check passed
+2. Testing DCA Plan Creation...
+✅ DCA Plan Creation passed
+3. Testing Payment Processing...
+✅ Payment Processing passed
+4. Testing Prepay Days...
+✅ Prepay Days passed
+5. Testing Early Withdrawal...
+✅ Early Withdrawal passed
+6. Testing Plan Completion...
+✅ Plan Completion passed
+7. Testing Rewards Distribution...
+✅ Rewards Distribution passed
+8. Testing Claim Rewards...
+✅ Claim Rewards passed
+9. Testing Dust Sweep...
+✅ Dust Sweep passed
+10. Testing Plan Creation (Full)...
+✅ Plan Creation (Full) passed
+11. Testing Payment Calculation...
+✅ Payment Calculation passed
+12. Testing Penalty Calculation...
+✅ Penalty Calculation passed
+13. Testing Strategy Creation...
+✅ Strategy Creation passed
+14. Testing Bitmor Threshold Check...
+✅ Bitmor Threshold Check passed
+15. Testing Plan Analytics...
+✅ Plan Analytics passed
+16. Testing User Balance...
+✅ User Balance passed
+17. Testing Withdrawal Fee...
+✅ Withdrawal Fee passed
+18. Testing User Referral...
+✅ User Referral passed
+19. Testing Use Referral...
+✅ Use Referral passed
+20. Testing User Stats...
+✅ User Stats passed
+21. Testing Supported Tokens...
+✅ Supported Tokens passed
+22. Testing Token Balances...
+✅ Token Balances passed
+23. Testing Dust Calculation...
+✅ Dust Calculation passed
+24. Testing Plan Completion Verification...
+✅ Plan Completion Verification passed
+
+25. Testing Error Handling...
+✅ Error handling passed
+
+� Test Results: 25/25 tests passed
+� Test suite completed!
+� Test server closed
+
+tusha@Tushar MINGW64 ~/OneDrive/Desktop/bitmor/bitmordca/backend (main)
+$ node simple-test.js
+� Smart Contract Test Server started on port 3001
+� Contract Address: 0x05b60F3E84c2fe6dfC3EA633F336c550AF8335B7
+� Network: Sepolia Testnet (Chain ID: 11155111)
+� Test User: 0x2b750c56f09178487F9A96FbA240Ea91Ac6F77fD
+� Backend Signer: 0x2b750c56f09178487F9A96FbA240Ea91Ac6F77fD
+� Running BitmorDCA Smart Contract Tests...
+
+� Checking user balances...
+   ETH Balance: 3.884090877548554442
+   USDC Balance: 0.0
+⚠️  Warning: Low USDC balance. Tests may fail.
+
+� Running contract tests...
+
+1. Testing Health Check...
+✅ Health Check passed
+   Data: {
+  "contractAddress": "0x05b60F3E84c2fe6dfC3EA633F336c550AF8335B7",
+  "totalValueLocked": "0",
+  "rewardsPool": "0",
+  "network": "Sepolia Testnet",
+  "chainId": 11155111
+}
+
+2. Testing Contract Stats...
+✅ Contract Stats passed
+   Data: {
+  "totalValueLocked": "0.0",
+  "rewardsPool": "0.0",
+  "contractAddress": "0x05b60F3E84c2fe6dfC3EA633F336c550AF8335B7",
+  "network": "Sepolia Testnet"
+}
+
+3. Testing User Plan (Before Creation)...
+✅ User Plan (Before Creation) passed
+   Data: {
+  "address": "0x2b750c56f09178487F9A96FbA240Ea91Ac6F77fD",
+  "totalPaid": "0.0",
+  "btcAccumulated": "0.0",
+  "targetBTC": "0.0",
+  "startTime": "0",
+  "lastPaymentTime": "0",
+  "streak": "0",
+  "maxStreak": "0",
+  "prepaidDays": "0",
+  "withdrawalDelay": "0",
+  "timePeriod": "0",
+  "cadence": "WEEKLY",
+  "status": "INACTIVE",
+  "bitmorEnabled": false,
+  "thresholdReached": false
+}
+
+4. Testing User Extras (Before Creation)...
+✅ User Extras (Before Creation) passed
+   Data: {
+  "address": "0x2b750c56f09178487F9A96FbA240Ea91Ac6F77fD",
+  "rewardBalance": "0.0",
+  "dustBalance": "0.0",
+  "yieldBoost": "0.0",
+  "lastRewardClaim": "0",
+  "rewardWeight": "0"
+}
+
+5. Testing Contract Interaction...
+⚠️  Skipping contract interaction test - insufficient balance
+
+� Test Results: 4/5 tests passed
+� Smart contract test suite completed!
+
+� Final balance check...
+   ETH Balance: 3.884090877548554442
+   USDC Balance: 0.0
+� Test server closed
+
+tusha@Tushar MINGW64 ~/OneDrive/Desktop/bitmor/bitmordca/backend (main)
